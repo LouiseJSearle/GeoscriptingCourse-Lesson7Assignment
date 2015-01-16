@@ -51,7 +51,7 @@ copyVCF[copyVCF > 100] <- NA
 copyVCF[copyVCF < 0] <- NA
 copyDiff <- vcfGewata - copyVCF
 ## Plot actual, predicted and difference VCF.
-opar <- par(mfrow=c(1,3))
+opar <- par(mfrow=c(1,1))
 plot(copyVCF, main='VCF Predicted')
 plot(vcfGewata, main ='VCF Actual')
 plot(copyDiff, main='VCF Difference', col=bpy.colors(10))
