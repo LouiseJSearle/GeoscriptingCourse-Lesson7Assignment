@@ -1,0 +1,136 @@
+---
+title: "Geoscripting Exercise 7"
+author: "Louise Searle"
+date: "16 January 2015"
+output: html_document
+---
+Exercise Description: 
+
+The VCF Tree Cover product that we used in the random forest classification is a product of a spatial model of tree cover, based several input data sources. Using Landsat band reflectance from one point in time, how well can we predict tree cover, using the existing VCF product as a response variable?
+
+Methodology:
+
+To begin I load the necessary libraries, as well as the Landsat and VCF Tree Cover data for the Gewata area, and the landuse classes training polygons dataset.
+```{r}
+## Libraries.
+library(raster)
+library(maptools)
+## Load data.
+load("data/GewataB1.rda")
+load("data/GewataB2.rda")
+load("data/GewataB3.rda")
+load("data/GewataB4.rda")
+load("data/GewataB5.rda")
+load("data/GewataB7.rda")
+load("data/vcfGewata.rda")
+load("data/trainingPoly.rda")
+```
+
+First I store the 6 Landsat bands into a rasterBrick object, with this I can plot scatterplot matrix to take a look a the relationship between the layers.
+```{r}
+## Create raster brick of bands.
+gewata <- brick(GewataB1,GewataB2,GewataB3,GewataB4,GewataB5,GewataB7)
+## View band pairs scatterplots.
+pairs(gewata)
+```
+From the scatterplots I can see that bands 1, 2 and 3 are highly correlated. Also bands 5 and 7. The correlation between these two sets of bands is slightly less. However, although band 4 contains a lot of clustered information, there is little correlation between it and the other bands. This implies that all bands with the exception of 4 are probably important in predicting tree cover.
+
+In the next step I remove the values in the VCF raster that are above 100, as the maximum value for VCF is 100 so these are probably the result of water, cloud or cloud shadow. Then I add this layer to the raster brick, so that all the covariates are stored in one object, and correct the names.
+```{r}
+## Replace unwanted values with NA.
+vcfGewata[vcfGewata > 100] <- NA
+## Add VCF layer to raster brick.
+covariates <- addLayer(gewata, vcfGewata)
+## Correct names.
+names(covariates) <- c("band1","band2","band3","band4","band5","band7","VCF")
+```
+
+The linear model function does not accept raster brick objects, so I extract the covariate values and store them as a data frame.
+```{r}
+## Extract covariates values to matrix.
+covValues <- getValues(covariates)
+## Remove NA values from matrix.
+covValues <- na.omit(covValues)
+## Convert matrix to a data frame.
+covariatesDF <- as.data.frame(covValues)
+## Check data frame.
+head(covariatesDF, n = 10)
+```
+
+Now I create a linear model object, using the Landsat band reflectances as the predictors for tree cover (VCF). 
+```{r}
+## Create linear model.
+modelVCF <- lm(formula= VCF ~ band1 + band2 + band3 + band4 + band5 + band7, data=covariatesDF)
+summary(modelVCF)
+```
+From the summary of the model I can say that Landsat bands 1 to 4 are probably the most important bands for predicting tree cover.
+
+With the linear model I predict the raster values for VCF tree cover.
+```{r}
+## Predict raster values.
+predVCF <- predict(covariates, model=modelVCF, na.rm=TRUE)
+```
+
+I then calculate the difference in values between the predicted VCF raster and the actual VCF raster. For temporary plotting purposes, the values above and below the range of values for VCF tree cover are removed.
+```{r}
+## Calculate difference.
+diffVCF <- vcfGewata - predVCF
+## Remove out of range values for predicted values for ease of plotting.
+copyVCF <- predVCF
+copyVCF[copyVCF > 100] <- NA
+copyVCF[copyVCF < 0] <- NA
+copyDiff <- vcfGewata - copyVCF
+```
+```{r, echo=FALSE}
+## Plot actual, predicted and difference VCF.
+opar <- par(mfrow=c(1,3))
+plot(copyVCF, main='VCF Predicted')
+plot(vcfGewata, main ='VCF Actual')
+plot(copyDiff, main='VCF Difference', col=bpy.colors(10))
+```
+
+The total RMSE for the predicted tree cover values is computed.
+```{r}
+## Square difference values per cell.
+residVCF <- diffVCF^2
+## For all cells, find the square root of the mean value.
+rmseVCF <- sqrt(cellStats(residVCF, mean, na.rm=T))
+## Check RMSE.
+rmseVCF
+```
+The total RMSE for the VCF predictions is 8.606318.
+
+In order to see the differences between predicted tree cover and actual tree cover for each landuse class, the landuse training polygons are rasterised using field 'Class'. Then the mean difference in values per landuse class zone is calculated. 
+```{r}
+## Rasterise landuse polygons, with class values.
+classes <- rasterize(trainingPoly, diffVCF, field='Class')
+## Calculate mean difference per zone.
+diffClass <- zonal(diffVCF, classes, fun=mean, na.rm=T)
+## Convert to data frame.
+diffClass <- data.frame(diffClass)
+## Add landuse names to data frame, according to zone code.
+diffClass$class <- levels(trainingPoly$Class)
+## Assign correct names.
+names(diffClass) <- c('Zone', 'Difference', 'Class')
+## Check difference.
+diffClass
+```
+The difference between values is greatest for wetland, and least for forest.
+
+Finally the RMSE for predicted VCF per landuse class is computed, and stored in a dataframe.
+```{r}
+## Calculate mean of square of differences per cell, per class.
+meanClass <- zonal(residVCF, classes, fun=mean, na.rm=T)
+## Convert to data frame.
+rmseClass <- data.frame(meanClass)
+## Calculate square root of mean.
+rmseClass$value <- sqrt(rmseClass$value)
+## Add landuse names to data frame, according to zone code.
+rmseClass$class <- levels(trainingPoly$Class)
+## Assign correct names.
+names(rmseClass) <- c('Zone', 'RMSE', 'Class')
+## Check table.
+rmseClass
+```
+The wetland class has the highest RMSE for predicted tree cover, cropland has slightly less, whilst the forest class has by far the lowest error. 
+
